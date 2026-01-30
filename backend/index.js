@@ -4,25 +4,42 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 
 const app = express();
-app.use(cors()); // Allow the frontend to talk to the backend
+app.use(cors()); // Allows our Next.js frontend to connect
 
 const server = http.createServer(app);
+
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:3000", // Your Next.js URL
-    methods: ["GET", "POST"]
-  }
+    origin: "http://localhost:3000", // The URL of your Next.js app
+    methods: ["GET", "POST"],
+  },
 });
 
 io.on('connection', (socket) => {
   console.log(`User Connected: ${socket.id}`);
 
-  socket.on('send_message', (data) => {
-    // This sends the message to everyone INCLUDING the sender
-    io.emit('receive_message', data);
+  // 1. Listen for when a user joins
+  socket.on("join_room", (data) => {
+    socket.join(data); // "data" will be the room name (e.g., "General")
+    console.log(`User with ID: ${socket.id} joined room: ${data}`);
+  });
+
+  // 2. Listen for a message
+  socket.on("send_message", (messageData) => {
+    // messageData will look like: { room: "General", author: "John", message: "Hello", time: "12:00" }
+    
+    // Send the message only to the people in that specific room
+    socket.to(messageData.room).emit("receive_message", messageData);
+    
+    // Note: Use io.to(room).emit if you want the sender to receive it back too
+  });
+
+  socket.on('disconnect', () => {
+    console.log('User Disconnected', socket.id);
   });
 });
 
-server.listen(4000, () => {
-  console.log('SERVER IS RUNNING ON PORT 4000');
+const PORT = 4000;
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
