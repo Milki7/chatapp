@@ -2,44 +2,88 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const mongoose = require('mongoose');
+require('dotenv').config();
+
+// Import your schema
+const Message = require('./models/Message'); 
 
 const app = express();
-app.use(cors()); // Allows our Next.js frontend to connect
+app.use(cors());
 
 const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:3000", // The URL of your Next.js app
-    methods: ["GET", "POST"],
-  },
+    origin: "http://localhost:3000",
+    methods: ["GET", "POST"]
+  }
 });
 
+// 1. Connect to MongoDB
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ Database Connected"))
+  .catch((err) => console.error("❌ DB Connection Error:", err));
+
+// 2. The Socket Logic
 io.on('connection', (socket) => {
-  console.log(`User Connected: ${socket.id}`);
+  console.log(`User connected: ${socket.id}`);
 
-  // 1. Listen for when a user joins
-  socket.on("join_room", (data) => {
-    socket.join(data); // "data" will be the room name (e.g., "General")
-    console.log(`User with ID: ${socket.id} joined room: ${data}`);
+  // JOIN ROOM & LOAD OLD MESSAGES
+  socket.on("join_room", async (roomName) => {
+    socket.join(roomName);
+    console.log(`User ${socket.id} joined room: ${roomName}`);
+
+    try {
+      // Find the last 50 messages for this room from the database
+      const previousMessages = await Message.find({ room: roomName })
+        .sort({ timestamp: 1 }) // Order by time (oldest to newest)
+        .limit(50);
+      
+      // Send the history ONLY to the user who just joined
+      socket.emit("load_history", previousMessages);
+    } catch (err) {
+      console.error("Error loading history:", err);
+    }
   });
 
-  // 2. Listen for a message
-  socket.on("send_message", (messageData) => {
-    // messageData will look like: { room: "General", author: "John", message: "Hello", time: "12:00" }
-    
-    // Send the message only to the people in that specific room
-    socket.to(messageData.room).emit("receive_message", messageData);
-    
-    // Note: Use io.to(room).emit if you want the sender to receive it back too
+  // SEND & SAVE MESSAGE
+  socket.on("send_message", async (data) => {
+    try {
+      // Create a new message object based on your schema
+      const newMessage = new Message({
+        room: data.room,
+        author: data.author,
+        content: data.content,
+        type: data.type || "text"
+      });
+
+      // Save it to MongoDB
+      const savedMessage = await newMessage.save();
+
+      // Broadcast the saved message (which now has an ID and timestamp) to the room
+      io.to(data.room).emit("receive_message", savedMessage);
+    } catch (err) {
+      console.error("Error saving message:", err);
+    }
   });
 
-  socket.on('disconnect', () => {
-    console.log('User Disconnected', socket.id);
+  // TYPING INDICATOR
+  socket.on("typing", (data) => {
+    // Tells everyone in the room except the sender that someone is typing
+    socket.to(data.room).emit("user_typing", { author: data.author });
+  });
+
+  socket.on("stop_typing", (data) => {
+    socket.to(data.room).emit("user_stopped_typing");
+  });
+
+  socket.on("disconnect", () => {
+    console.log("User Disconnected", socket.id);
   });
 });
 
-const PORT = 4000;
+const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Server is running on port ${PORT}`);
 });
