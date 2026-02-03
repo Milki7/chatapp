@@ -9,3 +9,5 @@ const MessageSchema = new mongoose.Schema({
   delivered: { type: Boolean, default: false }
 });
 
+// MAKE SURE IT SAYS THIS:
+module.exports = mongoose.model('Message', MessageSchema);
