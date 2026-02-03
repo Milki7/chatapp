@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #6A89A7;
+  --color-light-blue: #BDDDFC;
+  --color-active-blue: #88BDF2;
+  --color-dark-slate: #384959;
+}
+
+/* Base styles to make sure it looks like a chat app immediately */
+body {
+  background-color: var(--color-light-blue);
+  color: var(--color-dark-slate);
+  font-family: sans-serif;
+}
