@@ -5,8 +5,9 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 require('dotenv').config();
 
-// Import your schema
+// Import both schemas
 const Message = require('./models/Message'); 
+const User = require('./models/User'); // Added User model
 
 const app = express();
 app.use(cors());
@@ -29,48 +30,58 @@ mongoose.connect(process.env.MONGO_URI)
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
 
-  // JOIN ROOM & LOAD OLD MESSAGES
+  // --- ONLINE STATUS LOGIC ---
+  socket.on("user_online", async (userId) => {
+    socket.userId = userId; // Attach userId to the socket session
+    try {
+      await User.findByIdAndUpdate(userId, { 
+        isOnline: true, 
+        lastSeen: new Date() 
+      });
+      // Notify others this user is online
+      socket.broadcast.emit("user_status_change", { userId, status: "online" });
+    } catch (err) {
+      console.error("Error updating online status:", err);
+    }
+  });
+
+  // --- ROOMS & HISTORY ---
   socket.on("join_room", async (roomName) => {
     socket.join(roomName);
     console.log(`User ${socket.id} joined room: ${roomName}`);
 
     try {
-      // Find the last 50 messages for this room from the database
       const previousMessages = await Message.find({ room: roomName })
-        .sort({ timestamp: 1 }) // Order by time (oldest to newest)
+        .sort({ timestamp: 1 })
         .limit(50);
       
-      // Send the history ONLY to the user who just joined
       socket.emit("load_history", previousMessages);
     } catch (err) {
       console.error("Error loading history:", err);
     }
   });
 
-  // SEND & SAVE MESSAGE
+  // --- MESSAGING ---
   socket.on("send_message", async (data) => {
     try {
-      // Create a new message object based on your schema
       const newMessage = new Message({
         room: data.room,
-        author: data.author,
+        author: data.author, // This will be the User's name or ID
         content: data.content,
         type: data.type || "text"
       });
 
-      // Save it to MongoDB
       const savedMessage = await newMessage.save();
 
-      // Broadcast the saved message (which now has an ID and timestamp) to the room
+      // Emit to everyone in the room (including sender)
       io.to(data.room).emit("receive_message", savedMessage);
     } catch (err) {
       console.error("Error saving message:", err);
     }
   });
 
-  // TYPING INDICATOR
+  // --- TYPING INDICATORS ---
   socket.on("typing", (data) => {
-    // Tells everyone in the room except the sender that someone is typing
     socket.to(data.room).emit("user_typing", { author: data.author });
   });
 
@@ -78,8 +89,23 @@ io.on('connection', (socket) => {
     socket.to(data.room).emit("user_stopped_typing");
   });
 
-  socket.on("disconnect", () => {
+  // --- DISCONNECT ---
+  socket.on("disconnect", async () => {
     console.log("User Disconnected", socket.id);
+    if (socket.userId) {
+      try {
+        await User.findByIdAndUpdate(socket.userId, { 
+          isOnline: false, 
+          lastSeen: new Date() 
+        });
+        socket.broadcast.emit("user_status_change", { 
+          userId: socket.userId, 
+          status: "offline" 
+        });
+      } catch (err) {
+        console.error("Error updating offline status:", err);
+      }
+    }
   });
 });
 
